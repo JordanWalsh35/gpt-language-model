@@ -13,7 +13,7 @@ class GPTConfig:
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
-    dropout: float = 0.0  ################## CHECK #####################
+    dropout: float = 0.1
     bias: bool = True 
 
 

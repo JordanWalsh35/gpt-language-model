@@ -4,7 +4,7 @@ import time
 import math
 import torch
 from torch.distributed import init_process_group, destroy_process_group
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from contextlib import nullcontext
 import wandb
 
@@ -15,16 +15,19 @@ from model import GPTLanguageModel
 class TrainConfig:
     eval_iters: int = 200
     eval_interval: int = 2000
-    backend: str = 'nccl'
+    eval_only: bool = False
     gradient_accumulation_steps: int = 40
     iter_num: int = 0
     best_val_loss: float = 1e9
     always_save_checkpoint: bool = True
+    backend: str = 'nccl'
+    compile: bool = True
 
     # Logging
     wandb_log: bool = True
-    wandb_project = 'gpt pre-training'
-    wandb_run_name = 'gpt'
+    wandb_project = 'gpt'
+    wandb_run_name = 'gpt pre-training'
+    log_interval: int = 1
 
     # Optimizer
     learning_rate: float = 6e-4
@@ -43,7 +46,7 @@ class TrainConfig:
 class Trainer:
     """ A class to train our GPT model. """
 
-    def __init__(self, config, model_config, train_data, val_data, init_from, checkpoint):      
+    def __init__(self, config, model_config, train_data, val_data, init_from):      
         self.config = config
         self.model_config = model_config
         self.model = self.init_model()
@@ -54,13 +57,14 @@ class Trainer:
 
         # Define checkpoints
         checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
-        self.checkpoint_path = os.path.join(checkpoint_dir, checkpoint)
+        self.checkpoint_path = os.path.join(checkpoint_dir, "pretraining.pt")
         # Initialize training from scratch or from checkpoint
         self.init_from = init_from
         # Check if parallel training (ddp) is available
         self.ddp = int(os.environ.get("RANK", -1)) != -1
         self.device = self.device_type
-        self.ctx = nullcontext if self.device_type == 'cpu' else torch.amp.autocast(device_type=self.device_type, dtype=torch.bfloat16)
+        self.dtype = torch.bfloat16
+        self.ctx = nullcontext if self.device_type == 'cpu' else torch.amp.autocast(device_type=self.device_type, dtype=self.dtype)
 
         if self.ddp:
             init_process_group(backend=config.backend)
@@ -182,10 +186,55 @@ class Trainer:
                     if self.config.iter_num > 0:
                         checkpoint = {
                             'model': raw_model.state_dict(),
-                            'optimizer': self.optimizer
+                            'optimizer': self.optimizer.state_dict(),
+                            'model_args': asdict(self.model_config),
+                            'iter_num': self.config.iter_num,
+                            'best_val_loss': self.config.best_val_loss,
+                            'config': self.config,   ######## Fix to contain all appropriate variables ##########
                         }
-    
+                        torch.save(checkpoint, self.checkpoint_path)
+            
+            if self.config.iter_num == 0 and self.config.eval_only:
+                break
+            
+            # Forward-Backward update, with optional gradient accumulation to simulate larger batch size
+            for micro_step in range(self.config.gradient_accumulation_steps):
+                if self.ddp:
+                    self.model.require_backward_grad_sync = (micro_step == self.config.gradient_accumulation_steps - 1)
+                with self.ctx:
+                    logits, loss = self.model(X,Y)
+                    loss = loss / self.config.gradient_accumulation_steps
+                
+                X, Y = self.get_batch("train")
+                # Initialize a GradScaler
+                scaler = torch.cuda.amp.GradScaler(enabled=(self.dtype == 'float16'))
+                scaler.scale(loss).backward()
+            
+            # Clip the gradient
+            if self.config.grad_clip != 0.0:
+                scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+            # Step the optimizer and scaler if training in fp16
+            scaler.step(self.optimizer)
+            scaler.update()
+            # Flush the gradients
+            self.optimizer.zero_grad(set_to_none=True)
 
-    def save_model(self):
-        pass
+            # Timing and logging
+            t1 = time.time()
+            dt = t1 - t0
+            t0 = t1
+            if self.config.iter_num % self.config.log_interval == 0 and self.master_process:
+                lossf = loss.item() * self.config.gradient_accumulation_steps
+                if local_iter_num >= 5:
+                    mfu = raw_model.estimate_mfu(self.model_config.batch_size * self.config.gradient_accumulation_steps, dt)
+                    running_mfu = mfu if running_mfu == -1.0 else 0.9 * running_mfu + 0.1 * mfu
+                print(f"Iteration: {self.config.iter_num}, loss: {lossf:.4f}, time: {dt * 1000:.2f}ms, mfu: {running_mfu * 100:.2f}%")
+            self.config.iter_num += 1
+            local_iter_num += 1
+
+            if self.config.iter_num > self.config.max_iters:
+                break
         
+        if self.ddp:
+            destroy_process_group()
