@@ -177,13 +177,8 @@ class GPTLanguageModel(nn.Module):
             # Only forward the lm_head on the very last position
             logits = self.lm_head(x[:, [-1], :])
             loss = None
-        
+ 
         return logits, loss
-    
-
-    @classmethod
-    def from_pretrained(cls):
-        pass
 
 
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
@@ -194,8 +189,7 @@ class GPTLanguageModel(nn.Module):
         nodecay_params = [p for n,p in param_dict.items() if p.dim() < 2]
         optim_groups = [
             {'params': decay_params, 'weight_decay': weight_decay},
-            {'params': nodecay_params, 'weight_decay': 0.0}
-        ]
+            {'params': nodecay_params, 'weight_decay': 0.0}]
 
         num_decay_params = sum(p.numel() for p in decay_params)
         num_nodecay_params = sum(p.numel() for p in nodecay_params)
