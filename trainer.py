@@ -1,4 +1,5 @@
 import os
+import sys
 import numpy as np
 import time
 import math
@@ -6,6 +7,7 @@ import torch
 from torch.distributed import init_process_group, destroy_process_group
 from dataclasses import dataclass, asdict
 from contextlib import nullcontext
+from ast import literal_eval
 import wandb
 
 from model import GPTLanguageModel
@@ -103,6 +105,22 @@ class Trainer:
             self.config.iter_num = checkpoint['iter_num']
             self.config.best_val_loss = checkpoint['best_val_loss']
         return model
+    
+    
+    def overwrite_configurations(self):
+        """ Takes arguments from the command line and overwrites the current config values."""
+        for arg in sys.argv[:]:
+            if arg.startswith("--"):
+                key, val = arg.split("=")
+                key = key[2:]
+                if hasattr(self.config, key):
+                    try:
+                        lit_val = literal_eval(val)
+                    except (SyntaxError, ValueError):
+                        lit_val = val
+                    setattr(self.config, key, lit_val)
+                else:
+                    raise ValueError(f"Unknown config key: {key}")
 
 
     def get_batch(self, split):
