@@ -6,10 +6,11 @@ import math
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
+import logging
 from dataclasses import dataclass, asdict
 from contextlib import nullcontext
 from ast import literal_eval
-import wandb
+import platform
 
 from model import GPTLanguageModel
 
@@ -35,12 +36,6 @@ class TrainConfig:
     compile: bool = True
     init_from: str = "start"
 
-    # Logging
-    wandb_log: bool = True
-    wandb_project = 'gpt'
-    wandb_run_name = 'gpt pre-training'
-    log_interval: int = 1
-
     # Optimizer
     learning_rate: float = 6e-4
     weight_decay: float = 1e-1
@@ -61,17 +56,22 @@ class Trainer:
 
         # Define checkpoint path
         checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
-        self.checkpoint_path = os.path.join(checkpoint_dir, "pretraining.pt")
+        self.checkpoint_path = os.path.join(checkpoint_dir, "training.pt")
 
-        # Initialize model and optimizer
-        self.model = self.init_model()
-        self.optimizer = self.model.configure_optimizers(self.config.weight_decay, self.config.learning_rate, (self.config.beta1, self.config.beta2), self.device_type)
+        # Logging
+        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename="logs/trainer.log")
+        self.logger = logging.getLogger()
         
         # Device type and context manager configuration
         self.device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.device = self.device_type
         self.dtype = torch.bfloat16
         self.ctx = nullcontext if self.device_type == 'cpu' else torch.amp.autocast(device_type=self.device_type, dtype=self.dtype)
+
+        # Initialize model and optimizer
+        self.model = self.init_model()
+        self.optimizer = self.model.configure_optimizers(self.config.weight_decay, self.config.learning_rate, (self.config.beta1, self.config.beta2), self.device_type)
         
         # Check if parallel training (ddp) is available
         self.ddp = int(os.environ.get("RANK", -1)) != -1
@@ -94,15 +94,16 @@ class Trainer:
             ddp_world_size = 1
 
         # Calculate number of tokens per iteration
-        tokens_per_iter = self.config.gradient_accumulation_steps * ddp_world_size * self.model_config.batch_size * self.model_config.block_size
+        tokens_per_iter = self.config.gradient_accumulation_steps * ddp_world_size * self.config.batch_size * self.model_config.block_size
         print(f"Tokens per iteration will be: {tokens_per_iter:,}")
         # Set reproducible random number generator
         torch.manual_seed(1337 + seed_offset)
         # Enable TensorFloat-32 computation on GPUs
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
+
         # Compile the model
-        if self.config.compile:
+        if self.config.compile and platform.system() != "Windows":
             self.model = torch.compile(self.model)
     
 
@@ -111,6 +112,8 @@ class Trainer:
         if self.config.init_from == "start":
             print("Initializing new model")
             model = GPTLanguageModel(self.model_config)
+            self.logger.info("New model initialized for training.")
+
         # Recreate model from checkpoint if init_from == 'resume'
         elif self.config.init_from == "resume":
             print("Resuming training from checkpoint")
@@ -129,6 +132,7 @@ class Trainer:
             self.config.iter_num = checkpoint['iter_num']
             self.config.best_val_loss = checkpoint['best_val_loss']
             self.optimizer.load_state_dict(checkpoint['optimizer'])
+            self.logger.info("Training resumed from checkpoint.")
 
         return model
     
@@ -195,11 +199,7 @@ class Trainer:
 
     def run(self):
         """ Run the training loop. """
-
-        # Logging
-        if self.config.wandb_log and self.master_process:
-            wandb.init(project=self.config.wandb_project, name=self.config.wandb_run_name, config=self.config)
-
+        # Get initial batch
         X, Y = self.get_batch("train")
         t0 = time.time()
         # Number of iterations in the lifetime of this process
@@ -207,6 +207,7 @@ class Trainer:
         raw_model = self.model.module if self.ddp else self.model
         running_mfu = -1.0
 
+        # Training loop
         while True:
             lr = self.get_learning_rate(self.config.iter_num) if self.config.decay_lr else self.config.learning_rate
             for param_group in self.optimizer.param_groups:
@@ -215,16 +216,9 @@ class Trainer:
             # Evaluate loss on train/val sets and write checkpoints
             if self.config.iter_num % self.config.eval_interval == 0 and self.master_process:
                 losses = self.estimate_loss()
-                print(f"Step {self.config.iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+                print(f"Iteration #{self.config.iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+                self.logger.info(f"Iteration #{self.config.iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
-                if self.config.wandb_log:
-                    wandb.log({
-                        "iter": self.config.iter_num,
-                        "train loss": losses['train'],
-                        "val loss": losses['val'],
-                        "learning rate": lr,
-                        "mfu": running_mfu * 100})
-                
                 if losses['val'] < self.config.best_val_loss or self.config.always_save_checkpoint:
                     self.config.best_val_loss = losses['val']
                     if self.config.iter_num > 0:
@@ -264,11 +258,11 @@ class Trainer:
             # Flush the gradients
             self.optimizer.zero_grad(set_to_none=True)
 
-            # Timing and logging
+            # Timing
             t1 = time.time()
             dt = t1 - t0
             t0 = t1
-            if self.config.iter_num % self.config.log_interval == 0 and self.master_process:
+            if self.master_process:
                 lossf = loss.item() * self.config.gradient_accumulation_steps
                 if local_iter_num >= 5:
                     mfu = raw_model.estimate_mfu(self.model_config.batch_size * self.config.gradient_accumulation_steps, dt)
