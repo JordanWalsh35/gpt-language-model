@@ -17,8 +17,8 @@ from model import GPTLanguageModel
 @dataclass
 class TrainConfig:
     """ This dataclass holds the configuration for the Trainer class. """
-
     # General config
+    batch_size: int = 12
     eval_iters: int = 200
     eval_interval: int = 2000
     eval_only: bool = False
@@ -151,9 +151,9 @@ class Trainer:
 
     def get_batch(self, split):
         data = self.train_data if split == "train" else self.val_data
-        ix = torch.randint(len(data) - self.config.block_size)
-        x = torch.stack([torch.from_numpy((data[i:i + self.config.block_size]).astype(np.int64)) for i in ix])
-        y = torch.stack([torch.from_numpy((data[i + 1:i + 1 + self.block_size]).astype(np.int64)) for i in ix])
+        ix = torch.randint(len(data) - self.model_config.block_size, (self.model_config.batch_size,))
+        x = torch.stack([torch.from_numpy((data[i:i + self.model_config.block_size]).astype(np.int64)) for i in ix])
+        y = torch.stack([torch.from_numpy((data[i + 1:i + 1 + self.model_config.block_size]).astype(np.int64)) for i in ix])
 
         if self.device_type == 'cuda':
             x, y = x.pin_memory().to(self.device, non_blocking=True), y.pin_memory().to(self.device, non_blocking=True)
