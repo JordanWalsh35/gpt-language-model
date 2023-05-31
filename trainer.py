@@ -31,17 +31,20 @@ class TrainConfig:
     warmup_iters: int = 2000
     lr_decay_iters: int = 600000
     min_lr: float = 6e-5
+    grad_clip: float = 1.0
     always_save_checkpoint: bool = True
     backend: str = 'nccl'
     compile: bool = True
-    init_from: str = "start"
+    init_from: str = 'start'
+    dtype: str = 'bfloat16'
+    gpu_model: str = 'A100'
+    calculate_mfu: bool = True
 
     # Optimizer
     learning_rate: float = 6e-4
     weight_decay: float = 1e-1
     beta1: float = 0.9
     beta2: float = 0.95
-    grad_clip: float = 1.0
 
 
 
@@ -66,7 +69,7 @@ class Trainer:
         # Device type and context manager configuration
         self.device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.device = self.device_type
-        self.dtype = torch.bfloat16
+        self.dtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[self.config.dtype]
         self.ctx = nullcontext if self.device_type == 'cpu' else torch.amp.autocast(device_type=self.device_type, dtype=self.dtype)
 
         # Initialize model and optimizer
@@ -262,12 +265,12 @@ class Trainer:
             t1 = time.time()
             dt = t1 - t0
             t0 = t1
-            if self.master_process:
+            if self.master_process and self.config.calculate_mfu:
                 lossf = loss.item() * self.config.gradient_accumulation_steps
                 if local_iter_num >= 5:
-                    mfu = raw_model.estimate_mfu(self.model_config.batch_size * self.config.gradient_accumulation_steps, dt)
+                    mfu = raw_model.estimate_mfu(self.model_config.batch_size * self.config.gradient_accumulation_steps, dt, self.config.gpu_model)
                     running_mfu = mfu if running_mfu == -1.0 else 0.9 * running_mfu + 0.1 * mfu
-                print(f"Iteration: {self.config.iter_num}, loss: {lossf:.4f}, time: {dt * 1000:.2f}ms, mfu: {running_mfu * 100:.2f}%")
+                print(f"Iteration: {self.config.iter_num}, loss: {lossf:.4f}, time: {dt:.2f}s, mfu: {running_mfu * 100:.2f}%")
             self.config.iter_num += 1
             local_iter_num += 1
 
