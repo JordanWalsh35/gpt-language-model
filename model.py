@@ -136,7 +136,7 @@ class GPTLanguageModel(nn.Module):
                 nn.init.normal_(parameter, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
         
         # Print number of parameters
-        print("Number of parameters: %.2fM" % (self.number_of_parameters()/1e6,))
+        print("Number of parameters: %s" % (self.number_of_parameters()/1e6,))
 
 
     def initial_weights(self, module):
@@ -204,6 +204,22 @@ class GPTLanguageModel(nn.Module):
         print(f"Using fused AdamW: {use_fused}")
 
         return optimizer
+    
+
+    def estimate_mfu(self, fbpass_per_iter, dt, gpu_model):
+        """ Estimate the model flops utilization rate (MFU). References PaLM paper: https://arxiv.org/abs/2204.02311 """
+        num_param = self.number_of_parameters()
+        config = self.config
+        L, H, Q, T =  config.n_layer, config.n_head, config.n_embd//config.n_head, config.block_size
+        flops_per_token = 6*num_param + 12*L*H*Q*T
+        flops_per_fbpass = flops_per_token * T
+        flops_per_iter = flops_per_fbpass * fbpass_per_iter
+        flops_achieved = flops_per_iter * (1.0/dt)  # per second
+        # Tensor core FLOPS based on different GPU models, at mixed precision (FP16)
+        flops_promised = {'A100': 312e12, "V100": 125e12, "T4": 65e12}[gpu_model]
+        mfu = flops_achieved / flops_promised
+        
+        return mfu
 
 
     @torch.no_grad()
