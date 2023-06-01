@@ -59,6 +59,10 @@ class Trainer:
         self.train_data = train_data
         self.val_data = val_data
 
+        # Overwrite config if command line arguments
+        if len(sys.argv) > 1:
+            self.overwrite_configurations()
+
         # Define checkpoint path
         checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
         self.checkpoint_path = os.path.join(checkpoint_dir, "training.pt")
