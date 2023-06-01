@@ -27,10 +27,6 @@ class TrainConfig:
     gradient_accumulation_steps: int = 40
     iter_num: int = 0
     best_val_loss: float = 1e9
-    decay_lr: bool = True
-    warmup_iters: int = 2000
-    lr_decay_iters: int = 600000
-    min_lr: float = 6e-5
     grad_clip: float = 1.0
     always_save_checkpoint: bool = True
     backend: str = 'nccl'
@@ -39,6 +35,12 @@ class TrainConfig:
     dtype: str = 'bfloat16'
     gpu_model: str = 'A100'
     calculate_mfu: bool = True
+
+    # Learning Rate Decay
+    warmup_iters: int = 2000
+    lr_decay_iters: int = 600000
+    decay_lr: bool = True
+    min_lr: float = 6e-5
 
     # Optimizer
     learning_rate: float = 6e-4
@@ -72,9 +74,10 @@ class Trainer:
         self.dtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[self.config.dtype]
         self.ctx = nullcontext if self.device_type == 'cpu' else torch.amp.autocast(device_type=self.device_type, dtype=self.dtype)
 
-        # Initialize model and optimizer
+        # Initialize model, optimizer & scaler
         self.model = self.init_model()
         self.optimizer = self.model.configure_optimizers(self.config.weight_decay, self.config.learning_rate, (self.config.beta1, self.config.beta2), self.device_type)
+        self.scaler = torch.cuda.amp.GradScaler(enabled=(self.config.dtype == 'float16'))
         
         # Check if parallel training (ddp) is available
         self.ddp = int(os.environ.get("RANK", -1)) != -1
@@ -247,17 +250,15 @@ class Trainer:
                     loss = loss / self.config.gradient_accumulation_steps
                 
                 X, Y = self.get_batch("train")
-                # Initialize a GradScaler
-                scaler = torch.cuda.amp.GradScaler(enabled=(self.dtype == 'float16'))
-                scaler.scale(loss).backward()
+                self.scaler.scale(loss).backward()
             
             # Clip the gradient
             if self.config.grad_clip != 0.0:
-                scaler.unscale_(self.optimizer)
+                self.scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
             # Step the optimizer and scaler if training in fp16
-            scaler.step(self.optimizer)
-            scaler.update()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
             # Flush the gradients
             self.optimizer.zero_grad(set_to_none=True)
 
