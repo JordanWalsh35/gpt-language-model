@@ -136,7 +136,7 @@ class GPTLanguageModel(nn.Module):
                 nn.init.normal_(parameter, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
         
         # Print number of parameters
-        print("Number of parameters: %s" % (self.number_of_parameters()/1e6,))
+        print("Number of parameters: %.2fM" % (self.number_of_parameters()/1e6,))
 
 
     def initial_weights(self, module):

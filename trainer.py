@@ -76,7 +76,7 @@ class Trainer:
         self.device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.device = self.device_type
         self.dtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[self.config.dtype]
-        self.ctx = nullcontext if self.device_type == 'cpu' else torch.amp.autocast(device_type=self.device_type, dtype=self.dtype)
+        self.ctx = nullcontext() if self.device_type == 'cpu' else torch.amp.autocast(device_type=self.device_type, dtype=self.dtype)
 
         # Initialize model, optimizer & scaler
         self.model = self.init_model()
@@ -165,7 +165,7 @@ class Trainer:
 
     def get_batch(self, split):
         data = self.train_data if split == "train" else self.val_data
-        ix = torch.randint(len(data) - self.model_config.block_size, (self.model_config.batch_size,))
+        ix = torch.randint(len(data) - self.model_config.block_size, (self.config.batch_size,))
         x = torch.stack([torch.from_numpy((data[i:i + self.model_config.block_size]).astype(np.int64)) for i in ix])
         y = torch.stack([torch.from_numpy((data[i + 1:i + 1 + self.model_config.block_size]).astype(np.int64)) for i in ix])
 
@@ -226,7 +226,7 @@ class Trainer:
             # Evaluate loss on train/val sets and write checkpoints
             if self.config.iter_num % self.config.eval_interval == 0 and self.master_process:
                 losses = self.estimate_loss()
-                print(f"Iteration #{self.config.iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+                print(f"Iteration {self.config.iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
                 self.logger.info(f"Iteration #{self.config.iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
                 if losses['val'] < self.config.best_val_loss or self.config.always_save_checkpoint:
@@ -273,9 +273,9 @@ class Trainer:
             if self.master_process and self.config.calculate_mfu:
                 lossf = loss.item() * self.config.gradient_accumulation_steps
                 if local_iter_num >= 5:
-                    mfu = raw_model.estimate_mfu(self.model_config.batch_size * self.config.gradient_accumulation_steps, dt, self.config.gpu_model)
+                    mfu = raw_model.estimate_mfu(self.config.batch_size * self.config.gradient_accumulation_steps, dt, self.config.gpu_model)
                     running_mfu = mfu if running_mfu == -1.0 else 0.9 * running_mfu + 0.1 * mfu
-                print(f"Iteration: {self.config.iter_num}, loss: {lossf:.4f}, time: {dt:.2f}s, mfu: {running_mfu * 100:.2f}%")
+                print(f"Iteration {self.config.iter_num}: loss: {lossf:.4f}, time: {dt:.2f}s, mfu: {running_mfu * 100:.2f}%")
             self.config.iter_num += 1
             local_iter_num += 1
 
