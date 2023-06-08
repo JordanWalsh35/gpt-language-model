@@ -276,6 +276,7 @@ class Trainer:
                     mfu = raw_model.estimate_mfu(self.config.batch_size * self.config.gradient_accumulation_steps, dt, self.config.gpu_model)
                     running_mfu = mfu if running_mfu == -1.0 else 0.9 * running_mfu + 0.1 * mfu
                 print(f"Iteration {self.config.iter_num}: loss: {lossf:.4f}, time: {dt:.2f}s, mfu: {running_mfu * 100:.2f}%")
+                self.logger.info(f"Iteration {self.config.iter_num}: loss: {lossf:.4f}, time: {dt:.2f}s, mfu: {running_mfu * 100:.2f}%")
             self.config.iter_num += 1
             local_iter_num += 1
 
