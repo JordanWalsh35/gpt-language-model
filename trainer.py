@@ -58,11 +58,11 @@ class Trainer:
         self.model_config = model_config
         self.train_data = train_data
         self.val_data = val_data
-
+        
         # Overwrite config if command line arguments
         if len(sys.argv) > 1:
             self.overwrite_configurations()
-
+        
         # Define checkpoint path
         checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
         self.checkpoint_path = os.path.join(checkpoint_dir, "training.pt")
@@ -79,8 +79,7 @@ class Trainer:
         self.ctx = nullcontext() if self.device_type == 'cpu' else torch.amp.autocast(device_type=self.device_type, dtype=self.dtype)
 
         # Initialize model, optimizer & scaler
-        self.model = self.init_model()
-        self.optimizer = self.model.configure_optimizers(self.config.weight_decay, self.config.learning_rate, (self.config.beta1, self.config.beta2), self.device_type)
+        self.model, self.optimizer = self.init_model()
         self.scaler = torch.cuda.amp.GradScaler(enabled=(self.config.dtype == 'float16'))
         
         # Check if parallel training (ddp) is available
@@ -114,21 +113,24 @@ class Trainer:
 
         # Compile the model
         if self.config.compile and platform.system() != "Windows":
+            print("Compiling model...")
             self.model = torch.compile(self.model)
     
 
     def init_model(self):
-        # Return a newly initialized model if init_from == 'start'
+        # Initialize model and optimizer
+        model = GPTLanguageModel(self.model_config)
+        optimizer = model.configure_optimizers(self.config.weight_decay, self.config.learning_rate, (self.config.beta1, self.config.beta2), self.device_type)
+
+        # Indicate that a new model has been initialized if init_from == 'start'
         if self.config.init_from == "start":
             print("Initializing new model")
-            model = GPTLanguageModel(self.model_config)
             self.logger.info("New model initialized for training.")
 
         # Recreate model from checkpoint if init_from == 'resume'
         elif self.config.init_from == "resume":
             print("Resuming training from checkpoint")
             checkpoint = torch.load(self.checkpoint_path, map_location=self.device)           
-            model = GPTLanguageModel(self.model_config)
             state_dict = checkpoint['model']
 
             # Remove unwanted prefix from the state_dict keys
@@ -141,10 +143,10 @@ class Trainer:
             model.load_state_dict(state_dict)
             self.config.iter_num = checkpoint['iter_num']
             self.config.best_val_loss = checkpoint['best_val_loss']
-            self.optimizer.load_state_dict(checkpoint['optimizer'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
             self.logger.info("Training resumed from checkpoint.")
 
-        return model
+        return model, optimizer
     
     
     def overwrite_configurations(self):
