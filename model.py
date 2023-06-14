@@ -247,4 +247,4 @@ class GPTLanguageModel(nn.Module):
             # Append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
 
-            return idx
+        return idx
