@@ -181,6 +181,52 @@ class GPTLanguageModel(nn.Module):
         return logits, loss
 
 
+    @classmethod
+    def from_pretrained(cls, model_type):
+        """ Load parameters from pretrained model. """
+        config_args = {
+            'gpt2':         dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
+            'gpt2-medium':  dict(n_layer=24, n_head=16, n_embd=1024), # 350M params
+            'gpt2-large':   dict(n_layer=36, n_head=20, n_embd=1280), # 774M params
+            'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600), # 1558M params
+        }[model_type]
+        config_args['vocab_size'] = 50257
+        config_args['block_size'] = 1024
+        config_args['bias'] = True
+        config_args['dropout'] = 0.1
+
+        # Initialize model
+        config = GPTConfig()
+        model = GPTLanguageModel(config)
+        model_state_dict = model.state_dict()
+        sd_keys = model_state_dict.keys()
+        sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')]
+
+        # Initialize a Huggingface model
+        from transformers import GPT2LMHeadModel
+        hf_model = GPT2LMHeadModel.from_pretrained(model_type)
+        hf_state_dict = hf_model.state_dict()
+
+        # Ensure parameters and shapes align
+        sd_keys_hf = hf_state_dict.keys()
+        sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.masked_bias')]
+        sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.bias')]
+        transposed = ['attn.attn_layer.weight', 'attn.proj_layer.weight', 'mlp.fc_layer.weight', 'mlp.proj_layer.weight']
+        assert len(sd_keys_hf) == len(sd_keys), "Mismatched keys"
+
+        for k in sd_keys_hf:
+            if any(k.endswith(w) for w in transposed):
+                assert hf_state_dict[k].shape[::-1] == model_state_dict[k].shape
+                with torch.no_grad():
+                    model_state_dict[k].copy_(hf_state_dict[k].t())
+            else:
+                assert hf_state_dict[k].shape == model_state_dict[k].shape
+                with torch.no_grad():
+                    model_state_dict[k].copy_(hf_state_dict[k])
+        
+        return model
+
+
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
         # Get parameters that require grad.
         param_dict = {pn:p for pn, p in self.named_parameters() if p.requires_grad}
