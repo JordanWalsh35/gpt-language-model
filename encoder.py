@@ -155,12 +155,16 @@ class Encoder:
 
 def get_encoder():
     """ Returns an instance of the GPT BPE Encoder/Decoder and handles caching of "database" files. """
-    # Load gpt_encoder.json, this has raw mappings from token -> bpe index
-    with open('data/encoder_input/gpt_encoder.json', 'r') as f:
+
+    # Load gpt_encoder.json and vocab.bpe (from OpenAI)
+    inputs_dir = os.path.join(os.path.join(os.getcwd(), "data"), "encoder_input")
+    encoder_path = os.path.join(dir, "gpt_encoder.json")
+    vocab_path = os.path.join(dir, "vocab.bpe")
+    with open(encoder_path, 'r') as f:
         encoder = json.load(f)
-    # Load the vocab.bpe file
-    with open('data/encoder_input/vocab.bpe', 'r', encoding='utf-8') as f:
+    with open(vocab_path, 'r', encoding='utf-8') as f:
         bpe_data = f.read()
+        
     # Light postprocessing: strip the version on first line and the last line is a blank
     bpe_merges = [tuple(merge_str.split()) for merge_str in bpe_data.split('\n')[1:-1]]
     # Construct the Encoder object and return
