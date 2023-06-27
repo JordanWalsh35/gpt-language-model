@@ -45,9 +45,9 @@ class CausalSelfAttention(nn.Module):
         assert config.n_embd % config.n_head == 0
 
         # Key, Query, Value projections for all heads, but in a batch
-        self.attn_layer = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
         # Output projection
-        self.proj_layer = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # Regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
@@ -60,7 +60,7 @@ class CausalSelfAttention(nn.Module):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # Calculate Query, Key, Values for all heads in batch and move head forward to be the batch dim
-        q, k, v = self.attn_layer(x).split(self.n_embd, dim=2)
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
@@ -70,7 +70,7 @@ class CausalSelfAttention(nn.Module):
         y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
 
         # Output projection
-        y = self.resid_dropout(self.proj_layer(y))
+        y = self.resid_dropout(self.c_proj(y))
         return y
     
 
@@ -132,7 +132,7 @@ class GPTLanguageModel(nn.Module):
         self.apply(self.initial_weights)
         # Apply special scaled init to residual projections
         for name, parameter in self.named_parameters():
-            if name.endswith('proj_layer.weight'):
+            if name.endswith('c_proj.weight'):
                 nn.init.normal_(parameter, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
         
         # Print number of parameters
@@ -211,7 +211,7 @@ class GPTLanguageModel(nn.Module):
         sd_keys_hf = hf_state_dict.keys()
         sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.masked_bias')]
         sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.bias')]
-        transposed = ['attn.attn_layer.weight', 'attn.proj_layer.weight', 'mlp.fc_layer.weight', 'mlp.proj_layer.weight']
+        transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
         assert len(sd_keys_hf) == len(sd_keys), "Mismatched keys"
 
         for k in sd_keys_hf:
