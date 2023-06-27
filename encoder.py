@@ -157,7 +157,7 @@ def get_encoder():
     """ Returns an instance of the GPT BPE Encoder/Decoder and handles caching of "database" files. """
 
     # Load gpt_encoder.json and vocab.bpe (from OpenAI)
-    inputs_dir = os.path.join(os.path.join(os.getcwd(), "data"), "encoder_input")
+    inputs_dir = os.path.join(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"), "encoder_input")
     encoder_path = os.path.join(inputs_dir, "gpt_encoder.json")
     vocab_path = os.path.join(inputs_dir, "vocab.bpe")
     with open(encoder_path, 'r') as f:
