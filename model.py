@@ -80,14 +80,14 @@ class MultiLayerPerceptron(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.fc_layer = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-        self.proj_layer = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
     
     def forward(self, x):
-        x = self.fc_layer(x)
+        x = self.c_fc(x)
         x = gelu(x)
-        x = self.proj_layer(x)
+        x = self.c_proj(x)
         x = self.dropout(x)
         return x
 
