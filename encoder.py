@@ -158,8 +158,8 @@ def get_encoder():
 
     # Load gpt_encoder.json and vocab.bpe (from OpenAI)
     inputs_dir = os.path.join(os.path.join(os.getcwd(), "data"), "encoder_input")
-    encoder_path = os.path.join(dir, "gpt_encoder.json")
-    vocab_path = os.path.join(dir, "vocab.bpe")
+    encoder_path = os.path.join(inputs_dir, "gpt_encoder.json")
+    vocab_path = os.path.join(inputs_dir, "vocab.bpe")
     with open(encoder_path, 'r') as f:
         encoder = json.load(f)
     with open(vocab_path, 'r', encoding='utf-8') as f:
