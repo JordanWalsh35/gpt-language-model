@@ -196,7 +196,7 @@ class GPTLanguageModel(nn.Module):
         config_args['dropout'] = 0.1
 
         # Initialize model
-        config = GPTConfig()
+        config = GPTConfig(**config_args)
         model = GPTLanguageModel(config)
         model_state_dict = model.state_dict()
         sd_keys = model_state_dict.keys()
