@@ -120,9 +120,9 @@ class GPTLanguageModel(nn.Module):
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),   # Word token embedding
             wpe = nn.Embedding(config.block_size, config.n_embd),   # Positional Encoding Embedding
-            dropout = nn.Dropout(config.dropout),
-            blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            layer_norm = LayerNorm(config.n_embd, bias=config.bias),
+            drop = nn.Dropout(config.dropout),
+            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            ln_f = LayerNorm(config.n_embd, bias=config.bias),
         ))
 
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
